@@ -1,0 +1,369 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "Registered institute student profile in ASDC",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Authentication user ID",
+          "maxLength": 128
+        },
+        "studentId": {
+          "type": "string",
+          "description": "Unique assigned institutional student ID e.g. ASDC-0001",
+          "pattern": "^ASDC-[0-9]{4,}$",
+          "maxLength": 32
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Student full legal name",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Student 10-digit mobile phone number",
+          "pattern": "^[0-9]{10}$",
+          "maxLength": 15
+        },
+        "fatherName": {
+          "type": "string",
+          "description": "Father's full name",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "motherName": {
+          "type": "string",
+          "description": "Mother's full name",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Authenticated student Google email address",
+          "maxLength": 150
+        },
+        "batchId": {
+          "type": "string",
+          "description": "Course batch code e.g. ai-builder-mastery",
+          "maxLength": 50
+        },
+        "batchName": {
+          "type": "string",
+          "description": "Course batch display name",
+          "maxLength": 100
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of registration"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last profile update"
+        }
+      },
+      "required": [
+        "uid",
+        "studentId",
+        "fullName",
+        "phoneNumber",
+        "fatherName",
+        "motherName",
+        "email",
+        "batchId",
+        "batchName"
+      ]
+    },
+    "Counter": {
+      "title": "Counter",
+      "description": "Atomic sequence counter for institutional student ID generation",
+      "type": "object",
+      "properties": {
+        "currentValue": {
+          "type": "number",
+          "description": "Current sequence integer value"
+        },
+        "lastAssignedId": {
+          "type": "string",
+          "description": "Last formatted student ID e.g. ASDC-0001",
+          "maxLength": 32
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp of sequence update"
+        }
+      },
+      "required": ["currentValue", "lastAssignedId"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Attendance record for a student on a specific class date",
+      "type": "object",
+      "properties": {
+        "studentUid": {
+          "type": "string",
+          "description": "Student Firebase Auth UID",
+          "maxLength": 128
+        },
+        "studentId": {
+          "type": "string",
+          "description": "ASDC institutional student ID",
+          "maxLength": 32
+        },
+        "studentName": {
+          "type": "string",
+          "description": "Student full name",
+          "maxLength": 100
+        },
+        "studentEmail": {
+          "type": "string",
+          "description": "Student email address",
+          "maxLength": 150
+        },
+        "classDate": {
+          "type": "string",
+          "description": "Class date in YYYY-MM-DD IST format",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "maxLength": 10
+        },
+        "batchId": {
+          "type": "string",
+          "description": "Batch identifier",
+          "maxLength": 50
+        },
+        "status": {
+          "type": "string",
+          "description": "Attendance status",
+          "enum": ["PRESENT", "ABSENT", "EXCUSED"]
+        },
+        "source": {
+          "type": "string",
+          "description": "Source of attendance marking",
+          "enum": ["QR_SCAN", "ADMIN_MANUAL"]
+        },
+        "verifiedAt": {
+          "type": "string",
+          "description": "Verification IST timestamp"
+        },
+        "correctionReason": {
+          "type": "string",
+          "description": "Audit reason if modified by admin",
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "studentUid",
+        "studentId",
+        "studentName",
+        "studentEmail",
+        "classDate",
+        "batchId",
+        "status",
+        "source"
+      ]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Official institute announcements broadcasted to students",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Announcement headline",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "message": {
+          "type": "string",
+          "description": "Detailed announcement body",
+          "minLength": 5,
+          "maxLength": 2000
+        },
+        "category": {
+          "type": "string",
+          "description": "Announcement category",
+          "enum": ["GENERAL", "HOLIDAY", "SCHEDULE", "URGENT"]
+        },
+        "batchId": {
+          "type": "string",
+          "description": "Target batch ID or 'all'",
+          "maxLength": 50
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "Author admin email",
+          "maxLength": 150
+        }
+      },
+      "required": ["title", "message", "category", "createdAt"]
+    },
+    "Holiday": {
+      "title": "Holiday",
+      "description": "Marked non-class date or institute holiday",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "Date in YYYY-MM-DD format",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "maxLength": 10
+        },
+        "title": {
+          "type": "string",
+          "description": "Holiday title or occasion",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "reason": {
+          "type": "string",
+          "description": "Explanation of non-class status",
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "Admin email who declared holiday",
+          "maxLength": 150
+        }
+      },
+      "required": ["date", "title"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Log of administrative attendance corrections or overrides",
+      "type": "object",
+      "properties": {
+        "adminEmail": {
+          "type": "string",
+          "description": "Admin email who performed action",
+          "maxLength": 150
+        },
+        "action": {
+          "type": "string",
+          "description": "Type of action taken",
+          "maxLength": 50
+        },
+        "targetStudentId": {
+          "type": "string",
+          "description": "Student ID affected",
+          "maxLength": 32
+        },
+        "targetStudentName": {
+          "type": "string",
+          "description": "Student full name",
+          "maxLength": 100
+        },
+        "targetDate": {
+          "type": "string",
+          "description": "Date modified YYYY-MM-DD",
+          "maxLength": 10
+        },
+        "previousStatus": {
+          "type": "string",
+          "description": "Old status",
+          "maxLength": 20
+        },
+        "newStatus": {
+          "type": "string",
+          "description": "New status",
+          "maxLength": 20
+        },
+        "reason": {
+          "type": "string",
+          "description": "Mandatory explanation for audit",
+          "minLength": 5,
+          "maxLength": 500
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Timestamp of action"
+        }
+      },
+      "required": [
+        "adminEmail",
+        "action",
+        "targetStudentId",
+        "targetDate",
+        "newStatus",
+        "reason",
+        "timestamp"
+      ]
+    },
+    "InstituteSettings": {
+      "title": "InstituteSettings",
+      "description": "Global institute configuration for ASDC attendance system",
+      "type": "object",
+      "properties": {
+        "batchId": {
+          "type": "string",
+          "description": "Primary batch identifier",
+          "maxLength": 50
+        },
+        "batchName": {
+          "type": "string",
+          "description": "Primary batch display title",
+          "maxLength": 100
+        },
+        "classroomId": {
+          "type": "string",
+          "description": "Classroom QR secret key",
+          "maxLength": 100
+        },
+        "windowStartHour": {
+          "type": "number",
+          "description": "Attendance window start hour in IST (20 for 8 PM)"
+        },
+        "windowEndHour": {
+          "type": "number",
+          "description": "Attendance window end hour in IST (21 for 9 PM)"
+        },
+        "activeDaysOfWeek": {
+          "type": "string",
+          "description": "Comma separated active days of week (1=Mon..6=Sat)",
+          "maxLength": 20
+        }
+      },
+      "required": ["batchId", "batchName", "classroomId"]
+    }
+  },
+  "firestore": {
+    "/students/{studentUid}": {
+      "schema": "Student",
+      "description": "Institutional student profiles keyed by Firebase Auth UID"
+    },
+    "/counters/{counterId}": {
+      "schema": "Counter",
+      "description": "Atomic sequence generator for student IDs"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": "AttendanceRecord",
+      "description": "Daily attendance records keyed by studentUid_YYYY-MM-DD"
+    },
+    "/announcements/{announcementId}": {
+      "schema": "Announcement",
+      "description": "Institutional announcements"
+    },
+    "/holidays/{holidayDate}": {
+      "schema": "Holiday",
+      "description": "Non-class days and holidays keyed by YYYY-MM-DD"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Administrative audit trail for manual corrections"
+    },
+    "/settings/{settingId}": {
+      "schema": "InstituteSettings",
+      "description": "Institute and batch configuration"
+    }
+  }
+}

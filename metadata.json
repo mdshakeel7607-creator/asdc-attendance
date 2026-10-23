@@ -1,0 +1,10 @@
+{
+  "name": "ASDC Attendance",
+  "description": "Smart, secure institute attendance and student management system for ASDC with classroom QR scanning, verified batch tracking, and real-time administrative reporting.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

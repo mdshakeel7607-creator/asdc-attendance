@@ -1,0 +1,361 @@
+import {
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+} from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from './firebase';
+import {
+  AttendanceRecord,
+  AttendanceStatus,
+  AuditLog,
+  Announcement,
+  Holiday,
+  StudentAttendanceSummary,
+  StudentProfile,
+} from './types';
+import { getISTTimeInfo, checkAttendanceWindow, isScheduledClassDate } from './date-utils';
+import { INSTITUTE_CONFIG } from './admin-config';
+
+/**
+ * Fetch all attendance records for a specific student UID
+ */
+export async function getStudentAttendanceRecords(
+  studentUid: string
+): Promise<AttendanceRecord[]> {
+  try {
+    const q = query(
+      collection(db, 'attendance'),
+      where('studentUid', '==', studentUid)
+    );
+    const snap = await getDocs(q);
+    const records: AttendanceRecord[] = [];
+    snap.forEach((d) => {
+      records.push(d.data() as AttendanceRecord);
+    });
+    // Sort descending by classDate
+    records.sort((a, b) => b.classDate.localeCompare(a.classDate));
+    return records;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, 'attendance');
+    return [];
+  }
+}
+
+/**
+ * Fetch all attendance records for a specific date (for admin dashboard)
+ */
+export async function getAttendanceRecordsForDate(
+  dateStr: string
+): Promise<Record<string, AttendanceRecord>> {
+  try {
+    const q = query(
+      collection(db, 'attendance'),
+      where('classDate', '==', dateStr)
+    );
+    const snap = await getDocs(q);
+    const recordsMap: Record<string, AttendanceRecord> = {};
+    snap.forEach((d) => {
+      const data = d.data() as AttendanceRecord;
+      recordsMap[data.studentUid] = data;
+    });
+    return recordsMap;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, 'attendance');
+    return {};
+  }
+}
+
+/**
+ * Fetch all holidays
+ */
+export async function getHolidays(): Promise<Record<string, Holiday>> {
+  try {
+    const snap = await getDocs(collection(db, 'holidays'));
+    const holidaysMap: Record<string, Holiday> = {};
+    snap.forEach((d) => {
+      const h = d.data() as Holiday;
+      holidaysMap[h.date] = h;
+    });
+    return holidaysMap;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, 'holidays');
+    return {};
+  }
+}
+
+/**
+ * Fetch all announcements
+ */
+export async function getAnnouncements(): Promise<Announcement[]> {
+  try {
+    const snap = await getDocs(collection(db, 'announcements'));
+    const list: Announcement[] = [];
+    snap.forEach((d) => {
+      list.push(d.data() as Announcement);
+    });
+    // Sort descending by createdAt
+    list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return list;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, 'announcements');
+    return [];
+  }
+}
+
+/**
+ * Fetch all registered students (Admin only)
+ */
+export async function getAllStudents(): Promise<StudentProfile[]> {
+  try {
+    const snap = await getDocs(collection(db, 'students'));
+    const students: StudentProfile[] = [];
+    snap.forEach((d) => {
+      students.push(d.data() as StudentProfile);
+    });
+    // Sort by studentId ascending (ASDC-0001, ASDC-0002)
+    students.sort((a, b) => a.studentId.localeCompare(b.studentId));
+    return students;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'students');
+    return [];
+  }
+}
+
+/**
+ * Fetch audit logs (Admin only)
+ */
+export async function getAuditLogs(): Promise<AuditLog[]> {
+  try {
+    const snap = await getDocs(collection(db, 'audit_logs'));
+    const logs: AuditLog[] = [];
+    snap.forEach((d) => {
+      logs.push(d.data() as AuditLog);
+    });
+    logs.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    return logs;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'audit_logs');
+    return [];
+  }
+}
+
+/**
+ * Admin action: Correct an attendance record with mandatory audit reason
+ */
+export async function correctAttendanceRecord(params: {
+  adminEmail: string;
+  student: StudentProfile;
+  classDate: string;
+  newStatus: AttendanceStatus;
+  reason: string;
+}): Promise<AttendanceRecord> {
+  const { adminEmail, student, classDate, newStatus, reason } = params;
+  if (!reason || reason.trim().length < 5) {
+    throw new Error('A detailed audit reason (at least 5 characters) is required for attendance correction.');
+  }
+
+  const attendanceDocId = `${student.uid}_${classDate}`;
+  const attendanceRef = doc(db, 'attendance', attendanceDocId);
+  const nowIso = new Date().toISOString();
+
+  let previousStatus: AttendanceStatus = 'ABSENT';
+  const existingSnap = await getDoc(attendanceRef);
+  if (existingSnap.exists()) {
+    previousStatus = (existingSnap.data() as AttendanceRecord).status;
+  }
+
+  const updatedRecord: AttendanceRecord = {
+    id: attendanceDocId,
+    studentUid: student.uid,
+    studentId: student.studentId,
+    studentName: student.fullName,
+    studentEmail: student.email,
+    classDate,
+    batchId: student.batchId || INSTITUTE_CONFIG.DEFAULT_BATCH_ID,
+    status: newStatus,
+    source: 'ADMIN_MANUAL',
+    verifiedAt: nowIso,
+    correctionReason: reason.trim(),
+  };
+
+  // Write attendance record
+  await setDoc(attendanceRef, updatedRecord);
+
+  // Write audit log
+  const logId = `log_${Date.now()}_${student.studentId}`;
+  const logRef = doc(db, 'audit_logs', logId);
+  const auditLog: AuditLog = {
+    id: logId,
+    adminEmail,
+    action: 'ATTENDANCE_CORRECTION',
+    targetStudentId: student.studentId,
+    targetStudentName: student.fullName,
+    targetDate: classDate,
+    previousStatus,
+    newStatus,
+    reason: reason.trim(),
+    timestamp: nowIso,
+  };
+
+  await setDoc(logRef, auditLog);
+
+  return updatedRecord;
+}
+
+/**
+ * Admin action: Add or update a holiday
+ */
+export async function saveHoliday(params: {
+  date: string;
+  title: string;
+  reason?: string;
+  adminEmail: string;
+}): Promise<Holiday> {
+  const { date, title, reason, adminEmail } = params;
+  const holidayRef = doc(db, 'holidays', date);
+  const nowIso = new Date().toISOString();
+
+  const holiday: Holiday = {
+    id: date,
+    date,
+    title: title.trim(),
+    reason: reason?.trim() || '',
+    createdAt: nowIso,
+    createdBy: adminEmail,
+  };
+
+  await setDoc(holidayRef, holiday);
+  return holiday;
+}
+
+/**
+ * Admin action: Remove a holiday
+ */
+export async function removeHoliday(date: string): Promise<void> {
+  await deleteDoc(doc(db, 'holidays', date));
+}
+
+/**
+ * Admin action: Create an announcement
+ */
+export async function createAnnouncement(params: {
+  title: string;
+  message: string;
+  category: 'GENERAL' | 'HOLIDAY' | 'SCHEDULE' | 'URGENT';
+  adminEmail: string;
+}): Promise<Announcement> {
+  const { title, message, category, adminEmail } = params;
+  const id = `ann_${Date.now()}`;
+  const announcementRef = doc(db, 'announcements', id);
+  const nowIso = new Date().toISOString();
+
+  const announcement: Announcement = {
+    id,
+    title: title.trim(),
+    message: message.trim(),
+    category,
+    batchId: INSTITUTE_CONFIG.DEFAULT_BATCH_ID,
+    createdAt: nowIso,
+    createdBy: adminEmail,
+  };
+
+  await setDoc(announcementRef, announcement);
+  return announcement;
+}
+
+/**
+ * Admin action: Delete an announcement
+ */
+export async function deleteAnnouncement(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'announcements', id));
+}
+
+/**
+ * Compute student attendance summary (Total scheduled, Present, Absent, Attendance %)
+ * Respects active class schedule, holidays, and doesn't mark absent before window closes.
+ */
+export function calculateStudentSummary(
+  student: StudentProfile,
+  records: AttendanceRecord[],
+  holidays: Record<string, Holiday>,
+  activeDaysOfWeek: number[] = INSTITUTE_CONFIG.DEFAULT_ACTIVE_DAYS_OF_WEEK
+): StudentAttendanceSummary {
+  // If student registered recently, count dates from student.createdAt date up to today (or last 30 days)
+  const regDateStr = student.createdAt ? student.createdAt.split('T')[0] : '2026-10-01';
+  const todayIST = getISTTimeInfo();
+  const todayStr = todayIST.dateString;
+  const windowStatus = checkAttendanceWindow();
+
+  // Create lookup of recorded attendance
+  const recordMap: Record<string, AttendanceRecord> = {};
+  for (const r of records) {
+    recordMap[r.classDate] = r;
+  }
+
+  let totalScheduled = 0;
+  let presentCount = 0;
+  let absentCount = 0;
+  let excusedCount = 0;
+
+  // Iterate over relevant class dates (up to today)
+  // Let's generate past scheduled class dates since registration
+  const [startYear, startMonth, startDay] = regDateStr.split('-').map(Number);
+  const cursor = new Date(Date.UTC(startYear, startMonth - 1, startDay, 12, 0, 0));
+  const end = new Date(Date.UTC(todayIST.year, todayIST.month - 1, todayIST.day, 12, 0, 0));
+
+  while (cursor <= end) {
+    const y = cursor.getUTCFullYear();
+    const m = String(cursor.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(cursor.getUTCDate()).padStart(2, '0');
+    const dateStr = `${y}-${m}-${d}`;
+
+    const isClassDay = isScheduledClassDate(dateStr, holidays, activeDaysOfWeek);
+
+    if (isClassDay) {
+      const rec = recordMap[dateStr];
+      const isToday = dateStr === todayStr;
+
+      if (rec) {
+        if (rec.status === 'PRESENT') {
+          presentCount++;
+          totalScheduled++;
+        } else if (rec.status === 'EXCUSED') {
+          excusedCount++;
+          // Excused does not penalize attendance
+        } else if (rec.status === 'ABSENT') {
+          absentCount++;
+          totalScheduled++;
+        }
+      } else {
+        // No record exists
+        if (!isToday) {
+          // Past class day with no attendance record is Absent
+          absentCount++;
+          totalScheduled++;
+        }
+      }
+    }
+
+    // Step forward one day
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  const attendancePercentage =
+    totalScheduled > 0
+      ? Math.round((presentCount / totalScheduled) * 100)
+      : 100;
+
+  return {
+    totalClassesScheduled: totalScheduled,
+    presentCount,
+    absentCount,
+    excusedCount,
+    attendancePercentage,
+  };
+}

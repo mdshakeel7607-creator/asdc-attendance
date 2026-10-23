@@ -1,0 +1,161 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    // Strict Sole Admin Enforcement: ONLY mdausafmohiuddin@gmail.com
+    function isAdmin() {
+      return isVerified() && (
+        request.auth.token.email.lower() == 'mdausafmohiuddin@gmail.com'
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validation for Student entity
+    function isValidStudent(data) {
+      return data.keys().hasAll([
+        'uid', 'studentId', 'fullName', 'phoneNumber', 'fatherName', 'motherName', 'email', 'batchId', 'batchName'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'studentId', 'fullName', 'phoneNumber', 'fatherName', 'motherName', 'email', 'batchId', 'batchName', 'createdAt', 'updatedAt', 'readAnnouncementIds'
+      ]) &&
+      data.uid is string && data.uid.size() <= 128 && data.uid == request.auth.uid &&
+      data.studentId is string && data.studentId.size() <= 32 && data.studentId.matches('^ASDC-[0-9]{4,}$') &&
+      data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+      data.phoneNumber is string && data.phoneNumber.size() >= 10 && data.phoneNumber.size() <= 15 && data.phoneNumber.matches('^[0-9]{10}$') &&
+      data.fatherName is string && data.fatherName.size() >= 2 && data.fatherName.size() <= 100 &&
+      data.motherName is string && data.motherName.size() >= 2 && data.motherName.size() <= 100 &&
+      data.email is string && data.email.size() <= 150 && data.email.lower() == request.auth.token.email.lower() &&
+      data.batchId is string && data.batchId.size() <= 50 &&
+      data.batchName is string && data.batchName.size() <= 100;
+    }
+
+    // Validation for AttendanceRecord (Anytime Attendance Allowed)
+    function isValidAttendance(data) {
+      return data.keys().hasAll([
+        'studentUid', 'studentId', 'studentName', 'studentEmail', 'classDate', 'batchId', 'status', 'source'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'studentUid', 'studentId', 'studentName', 'studentEmail', 'classDate', 'batchId', 'status', 'source', 'verifiedAt', 'submittedAt', 'correctionReason'
+      ]) &&
+      data.studentUid is string && data.studentUid.size() <= 128 &&
+      data.studentId is string && data.studentId.size() <= 32 && data.studentId.matches('^ASDC-[0-9]{4,}$') &&
+      data.studentName is string && data.studentName.size() <= 100 &&
+      data.studentEmail is string && data.studentEmail.size() <= 150 &&
+      data.classDate is string && data.classDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+      data.batchId is string && data.batchId.size() <= 50 &&
+      data.status in ['PRESENT', 'ABSENT', 'EXCUSED'] &&
+      data.source in ['QR_SCAN', 'ADMIN_MANUAL'];
+    }
+
+    // Validation for Announcement
+    function isValidAnnouncement(data) {
+      return data.keys().hasAll(['title', 'message', 'category', 'createdAt']) &&
+      data.title is string && data.title.size() >= 3 && data.title.size() <= 150 &&
+      data.message is string && data.message.size() >= 5 && data.message.size() <= 2000 &&
+      data.category in ['GENERAL', 'HOLIDAY', 'SCHEDULE', 'URGENT'];
+    }
+
+    // Validation for Holiday
+    function isValidHoliday(data) {
+      return data.keys().hasAll(['date', 'title']) &&
+      data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+      data.title is string && data.title.size() >= 2 && data.title.size() <= 100;
+    }
+
+    // Student Profiles
+    match /students/{studentUid} {
+      allow get: if isSignedIn() && (request.auth.uid == studentUid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isVerified() && isValidId(studentUid) && request.auth.uid == studentUid && isValidStudent(incoming());
+      allow update: if isVerified() && isValidId(studentUid) && (
+        isAdmin() ||
+        (
+          request.auth.uid == studentUid &&
+          incoming().studentId == existing().studentId &&
+          incoming().uid == existing().uid &&
+          incoming().email.lower() == existing().email.lower() &&
+          incoming().batchId == existing().batchId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['phoneNumber', 'updatedAt', 'readAnnouncementIds'])
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Counters for atomic student ID generation
+    match /counters/{counterId} {
+      allow get: if isSignedIn() && isValidId(counterId);
+      allow list: if false;
+      allow write: if isVerified() && isValidId(counterId);
+    }
+
+    // Attendance records (Accessible anytime, single record per student/date, only owner/admin)
+    match /attendance/{attendanceId} {
+      allow get: if isSignedIn() && (
+        isAdmin() || (resource != null && resource.data.studentUid == request.auth.uid)
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || (resource != null && resource.data.studentUid == request.auth.uid)
+      );
+      allow create: if isVerified() && isValidId(attendanceId) && isValidAttendance(incoming()) && (
+        isAdmin() || (incoming().studentUid == request.auth.uid && incoming().status == 'PRESENT' && incoming().source == 'QR_SCAN')
+      );
+      allow update: if isAdmin() && isValidId(attendanceId) && isValidAttendance(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Announcements
+    match /announcements/{announcementId} {
+      allow get: if isSignedIn() && isValidId(announcementId);
+      allow list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(announcementId) && isValidAnnouncement(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Holidays & Non-class Days
+    match /holidays/{holidayId} {
+      allow get: if isSignedIn() && isValidId(holidayId);
+      allow list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(holidayId) && isValidHoliday(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Audit Logs (Only mdausafmohiuddin@gmail.com)
+    match /audit_logs/{logId} {
+      allow get: if isAdmin() && isValidId(logId);
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin() && isValidId(logId);
+    }
+
+    // Institute Settings
+    match /settings/{settingId} {
+      allow get: if isSignedIn() && isValidId(settingId);
+      allow list: if isSignedIn();
+      allow create, update, delete: if isAdmin() && isValidId(settingId);
+    }
+  }
+}

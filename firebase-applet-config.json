@@ -1,0 +1,12 @@
+{
+  "projectId": "asdc-attendance",
+  "appId": "1:231553914749:web:e71a15060e18cd6dbb1e14",
+  "apiKey": "AIzaSyB-03wESUgpzn3j4oRZnMBv-0NujbKz8a0",
+  "authDomain": "asdc-attendance.firebaseapp.com",
+  "firestoreDatabaseId": "",
+  "storageBucket": "asdc-attendance.firebasestorage.app",
+  "messagingSenderId": "231553914749",
+  "measurementId": "G-3Z37ZD81JJ",
+  "oAuthClientId": "",
+  "recaptchaSiteKey": ""
+}
