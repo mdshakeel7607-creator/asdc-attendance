@@ -126,6 +126,7 @@ export function QRScannerModal({
   const lastScanTimestampRef = useRef<number>(0);
   const lastDecodedPayloadRef = useRef<{ text: string; time: number } | null>(null);
   const barcodeDetectorRef = useRef<any>(null);
+  const startCameraRef = useRef<(targetCameraId?: string) => Promise<void>>(async () => {});
 
   // Initialize BarcodeDetector once on client
   useEffect(() => {
@@ -325,6 +326,7 @@ export function QRScannerModal({
       } catch (err: any) {
         console.error('[ASDC Scanner] Attendance processing error:', err);
         const msg = err instanceof Error ? err.message : 'Failed to verify classroom attendance code.';
+        setLastErrorDetail({ name: err?.name || 'AttendanceError', message: msg });
         setErrorMessage(msg);
         setErrorType('GENERIC');
         setScannerState('error');
@@ -457,6 +459,7 @@ export function QRScannerModal({
 
       if (!window.isSecureContext && window.location.hostname !== 'localhost') {
         setErrorType('INSECURE');
+        setLastErrorDetail({ name: 'InsecureContextError', message: 'Camera requires HTTPS. Current context is not secure.' });
         setErrorMessage('Camera access requires an HTTPS secure context. Please open the application over HTTPS.');
         setScannerState('error');
         isStartingRef.current = false;
@@ -465,6 +468,7 @@ export function QRScannerModal({
 
       if (!navigator?.mediaDevices?.getUserMedia) {
         setErrorType('NOT_FOUND');
+        setLastErrorDetail({ name: 'MediaDevicesUnavailable', message: 'navigator.mediaDevices.getUserMedia is not available.' });
         setErrorMessage('navigator.mediaDevices.getUserMedia is not supported in this browser.');
         setScannerState('error');
         isStartingRef.current = false;
@@ -533,6 +537,7 @@ export function QRScannerModal({
           track.onended = () => {
             if (sessionTokenRef.current === currentSession) {
               console.warn('[ASDC Scanner] Camera track ended unexpectedly.');
+              setLastErrorDetail({ name: 'TrackEndedError', message: `Video track "${track.label || 'Camera'}" ended unexpectedly.` });
               setErrorType('GENERIC');
               setErrorMessage('Camera stream ended or camera hardware was disconnected.');
               setScannerState('error');
@@ -543,7 +548,13 @@ export function QRScannerModal({
 
         const video = videoRef.current;
         if (!video) {
+          console.error('[ASDC Scanner] Video element ref is null — cannot attach stream.');
           stream.getTracks().forEach((t) => t.stop());
+          streamRef.current = null;
+          setLastErrorDetail({ name: 'VideoRefError', message: 'Video element was not available when the camera stream was ready.' });
+          setErrorType('GENERIC');
+          setErrorMessage('Camera started but the video display was not ready. Please tap Try Again.');
+          setScannerState('error');
           isStartingRef.current = false;
           return;
         }
@@ -555,8 +566,17 @@ export function QRScannerModal({
 
         try {
           await video.play();
-        } catch (playErr) {
-          console.warn('[ASDC Scanner] video.play() warning:', playErr);
+        } catch (playErr: any) {
+          // AbortError is benign (interrupted by a subsequent play request or user gesture).
+          // All other errors (NotAllowedError, etc.) are critical and should propagate.
+          if (playErr?.name !== 'AbortError') {
+            console.error('[ASDC Scanner] video.play() failed critically:', playErr);
+            throw playErr;
+          }
+          console.warn('[ASDC Scanner] video.play() AbortError (benign, retrying):', playErr);
+          // Brief delay then retry once for AbortError
+          await new Promise(r => setTimeout(r, 100));
+          try { await video.play(); } catch { /* ignore retry failure, readiness check will catch it */ }
         }
 
         // Wait for real frames (readyState >= 2 and dimensions > 0)
@@ -657,12 +677,16 @@ export function QRScannerModal({
     [selectedCameraId, startScanLoop, stopCameraResources]
   );
 
+  // Keep ref in sync so the lifecycle effect always uses the latest startCamera
+  // without having it in the dependency array (prevents stop→restart loops)
+  startCameraRef.current = startCamera;
+
   // Switch camera when user selects from dropdown
   const handleCameraChange = (newCameraId: string) => {
     setSelectedCameraId(newCameraId);
     stopCameraResources();
     setTimeout(() => {
-      startCamera(newCameraId);
+      startCameraRef.current(newCameraId);
     }, 150);
   };
 
@@ -775,20 +799,22 @@ export function QRScannerModal({
   };
 
   // SINGLE CAMERA LIFECYCLE EFFECT
-  // Mounts once when modal opens, stops once when closed or unmounted
+  // Uses startCameraRef to avoid depending on startCamera identity.
+  // This effect ONLY re-runs when isOpen changes — never when callbacks are recreated.
+  // This prevents the stop→restart loop that caused flickering and 0x0 video failures.
   useEffect(() => {
     if (!isOpen) return;
 
     isProcessingRef.current = false;
     const startTimer = setTimeout(() => {
-      startCamera();
+      startCameraRef.current();
     }, 0);
 
     return () => {
       clearTimeout(startTimer);
       stopCameraResources();
     };
-  }, [isOpen, startCamera, stopCameraResources]);
+  }, [isOpen, stopCameraResources]);
 
   if (!isOpen) return null;
 
