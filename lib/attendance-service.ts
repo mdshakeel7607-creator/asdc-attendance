@@ -13,6 +13,7 @@ import { db, handleFirestoreError, OperationType } from './firebase';
 import {
   AttendanceRecord,
   AttendanceStatus,
+  ClassroomQRPayload,
   AuditLog,
   Announcement,
   Holiday,
@@ -21,6 +22,121 @@ import {
 } from './types';
 import { getISTTimeInfo, checkAttendanceWindow, isScheduledClassDate } from './date-utils';
 import { INSTITUTE_CONFIG } from './admin-config';
+
+/**
+ * Submit verified classroom QR attendance via client-side authenticated Firestore write.
+ * This directly uses the student's authenticated Firebase session (`request.auth`),
+ * which satisfies the Firestore Security Rules (`/attendance/{attendanceId}`).
+ */
+export async function submitClassroomAttendance(params: {
+  student: StudentProfile;
+  rawQrContent: string;
+}): Promise<{
+  success: boolean;
+  alreadyRecorded: boolean;
+  message: string;
+  record: AttendanceRecord;
+}> {
+  const { student, rawQrContent } = params;
+
+  // 1. Authoritative IST date
+  const evaluationTime = new Date();
+  const istInfo = getISTTimeInfo(evaluationTime);
+  const classDate = istInfo.dateString; // YYYY-MM-DD
+
+  // 2. Validate QR Payload
+  let qrData: ClassroomQRPayload;
+  try {
+    qrData = typeof rawQrContent === 'string' ? JSON.parse(rawQrContent) : rawQrContent;
+  } catch {
+    throw new Error('Invalid QR code. The scanned QR is not valid JSON.');
+  }
+
+  if (
+    qrData.issuer !== 'ASDC' ||
+    qrData.type !== 'classroom_attendance' ||
+    qrData.classroomId !== INSTITUTE_CONFIG.CLASSROOM_SECRET_KEY
+  ) {
+    throw new Error('Invalid Classroom QR. Scanned QR code does not match ASDC AI Builder Mastery classroom.');
+  }
+
+  if (
+    qrData.batchId !== INSTITUTE_CONFIG.DEFAULT_BATCH_ID ||
+    (student.batchId && student.batchId !== INSTITUTE_CONFIG.DEFAULT_BATCH_ID)
+  ) {
+    throw new Error(
+      `Unauthorized Batch: Only students enrolled in '${INSTITUTE_CONFIG.DEFAULT_BATCH_NAME}' may submit attendance.`
+    );
+  }
+
+  // 3. Holiday check (Holidays are readable by all authenticated users)
+  try {
+    const holidayRef = doc(db, 'holidays', classDate);
+    const holidaySnap = await getDoc(holidayRef);
+    if (holidaySnap.exists()) {
+      const holidayData = holidaySnap.data() as Holiday;
+      throw new Error(
+        `Attendance is not active today. Date ${classDate} is declared a holiday: ${
+          holidayData?.title || 'Official Holiday'
+        }.`
+      );
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('declared a holiday')) {
+      throw err;
+    }
+    console.warn('Holiday check notice:', err);
+  }
+
+  // 4. Duplicate prevention & write attendance record
+  const attendanceDocId = `${student.uid}_${classDate}`;
+  const attendanceRef = doc(db, 'attendance', attendanceDocId);
+
+  try {
+    const existingSnap = await getDoc(attendanceRef);
+    if (existingSnap.exists()) {
+      const existingRecord = existingSnap.data() as AttendanceRecord;
+      return {
+        success: false,
+        alreadyRecorded: true,
+        message: `Attendance already recorded for today (${classDate}) as ${existingRecord.status}.`,
+        record: existingRecord,
+      };
+    }
+  } catch (err) {
+    // If getDoc throws permissions or doesn't exist, proceed to create
+    console.warn('Duplicate check lookup notice:', err);
+  }
+
+  // 5. Build verified attendance record
+  const nowIso = new Date().toISOString();
+  const newRecord: AttendanceRecord = {
+    id: attendanceDocId,
+    studentUid: student.uid,
+    studentId: student.studentId,
+    studentName: student.fullName,
+    studentEmail: student.email,
+    classDate,
+    batchId: student.batchId || INSTITUTE_CONFIG.DEFAULT_BATCH_ID,
+    status: 'PRESENT',
+    source: 'QR_SCAN',
+    verifiedAt: nowIso,
+    submittedAt: nowIso,
+  };
+
+  try {
+    await setDoc(attendanceRef, newRecord);
+  } catch (writeErr) {
+    handleFirestoreError(writeErr, OperationType.CREATE, `attendance/${attendanceDocId}`);
+  }
+
+  return {
+    success: true,
+    alreadyRecorded: false,
+    message: `Successfully marked PRESENT for ${classDate} at ${istInfo.timeString} IST.`,
+    record: newRecord,
+  };
+}
 
 /**
  * Fetch all attendance records for a specific student UID

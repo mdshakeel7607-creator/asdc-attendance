@@ -124,11 +124,18 @@ export async function POST(request: NextRequest) {
       message: `Successfully marked PRESENT for ${classDate} at ${istInfo.timeString} IST.`,
       record: newRecord,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Attendance submission error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Internal attendance processing error.';
+    const isPermissionError = errorMessage.includes('permission') || errorMessage.includes('insufficient');
+    
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Internal attendance processing error.' },
-      { status: 500 }
+      { 
+        error: isPermissionError
+          ? 'Firestore permission error: Server route lacks an authenticated user context. Attendance submissions are processed via the client authenticated session.'
+          : errorMessage 
+      },
+      { status: isPermissionError ? 403 : 500 }
     );
   }
 }

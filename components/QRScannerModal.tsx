@@ -22,6 +22,7 @@ import { StudentProfile, AttendanceRecord, ClassroomQRPayload } from '@/lib/type
 import { INSTITUTE_CONFIG } from '@/lib/admin-config';
 import { buildClassroomQRPayload } from '@/lib/qr-generator';
 import { formatDisplayDate, formatDisplayTimestamp, getISTTimeInfo } from '@/lib/date-utils';
+import { submitClassroomAttendance } from '@/lib/attendance-service';
 
 export type ScannerLifecycleState =
   | 'idle'
@@ -279,33 +280,20 @@ export function QRScannerModal({
         return;
       }
 
-      // Valid QR payload detected! Proceed to server verification
+      // Valid QR payload detected! Proceed to authenticated attendance recording
       setScannerState('processing');
       setErrorMessage(null);
       setErrorType(null);
 
       try {
         const curStudent = studentRef.current;
-        console.log('[ASDC Scanner] Valid QR verified. Submitting attendance for:', curStudent.studentId);
+        console.log('[ASDC Scanner] Valid QR verified. Recording attendance for:', curStudent.studentId);
 
-        const res = await fetch('/api/attendance/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            studentUid: curStudent.uid,
-            studentId: curStudent.studentId,
-            studentName: curStudent.fullName,
-            studentEmail: curStudent.email,
-            batchId: curStudent.batchId || INSTITUTE_CONFIG.DEFAULT_BATCH_ID,
-            rawQrContent: decodedText,
-          }),
+        // Record attendance directly using the authenticated client session
+        const data = await submitClassroomAttendance({
+          student: curStudent,
+          rawQrContent: decodedText,
         });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || 'Server rejected attendance submission.');
-        }
 
         // Attendance recorded! Stop camera resources on final success
         stopCameraResources();
